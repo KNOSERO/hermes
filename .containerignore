@@ -1,0 +1,13 @@
+.backups
+.secret
+.config/job-history.json
+.git
+.idea
+.scratch
+__pycache__
+web/node_modules
+web/.next
+web/out
+docs
+LICENSE
+README.md
