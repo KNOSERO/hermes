@@ -1,0 +1,39 @@
+---
+- name: Read rollback information
+  ansible.builtin.include_vars:
+    file: "/backups/{{ hermes_name }}-rollback.json"
+    name: rollback
+
+- name: Confirm rollback snapshot exists
+  ansible.builtin.stat:
+    path: "/backups/{{ rollback.snapshot }}"
+  register: rollback_archive
+
+- name: Reject an incomplete rollback snapshot
+  ansible.builtin.assert:
+    that:
+      - rollback_archive.stat.exists
+      - not rollback.snapshot.endswith('.partial')
+    fail_msg: "The rollback snapshot is missing or incomplete."
+
+- name: Snapshot current data before rollback
+  ansible.builtin.include_tasks: backup.yml
+  vars:
+    backup_label: before-rollback
+
+- name: Restore the pre-update data snapshot
+  ansible.builtin.include_tasks: restore-data.yml
+  vars:
+    restore_archive: "{{ rollback.snapshot }}"
+
+- name: Start Hermes with the previous image
+  community.docker.docker_container:
+    name: "{{ hermes_name }}"
+    image: "{{ rollback.image }}"
+    command: gateway run
+    state: started
+    restart_policy: unless-stopped
+    volumes:
+      - "{{ hermes_name }}:{{ hermes_data_path }}"
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true

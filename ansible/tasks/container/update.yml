@@ -1,0 +1,30 @@
+---
+- name: Read the currently running Hermes image
+  community.docker.docker_container_info:
+    name: "{{ hermes_name }}"
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+  register: current_container
+  failed_when: false
+
+- name: Preserve current image and data before update
+  ansible.builtin.include_tasks: backup.yml
+  vars:
+    backup_label: pre-update
+
+- name: Pull the latest Hermes Agent image
+  community.docker.docker_image:
+    name: "{{ hermes_image }}"
+    source: pull
+    force_source: true
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+
+- name: Recreate the Hermes gateway on the new image
+  ansible.builtin.include_tasks: gateway.yml
+
+- name: Record rollback image and data snapshot
+  ansible.builtin.copy:
+    dest: "/backups/{{ hermes_name }}-rollback.json"
+    mode: '0600'
+    content: "{{ {'image': (current_container.container.Image if current_container.container is defined else hermes_image), 'snapshot': backup_archive, 'updated': backup_stamp} | to_nice_json }}\n"

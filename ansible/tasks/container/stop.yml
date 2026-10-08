@@ -1,0 +1,30 @@
+---
+- name: Check for the Hermes gateway container
+  community.docker.docker_container_info:
+    name: "{{ hermes_name }}"
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+  register: hermes_gateway_container
+
+- name: Stop the Hermes gateway container
+  community.docker.docker_container:
+    name: "{{ hermes_name }}"
+    state: stopped
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+  when: hermes_gateway_container.exists
+
+- name: Check for the Hermes Desktop server container
+  community.docker.docker_container_info:
+    name: "{{ hermes_desktop_name }}"
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+  register: hermes_desktop_container
+
+- name: Stop the Hermes Desktop server container
+  community.docker.docker_container:
+    name: "{{ hermes_desktop_name }}"
+    state: stopped
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+  when: hermes_desktop_container.exists

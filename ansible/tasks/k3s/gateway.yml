@@ -1,0 +1,57 @@
+---
+- name: Check whether Hermes StatefulSet exists
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: StatefulSet
+    name: "{{ hermes_name }}"
+    namespace: "{{ hermes_namespace }}"
+  register: existing_statefulset
+
+- name: Install Hermes storage when no StatefulSet exists
+  ansible.builtin.include_tasks: install.yml
+  when: existing_statefulset.resources | length == 0
+
+- name: Run one Hermes gateway replica
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ hermes_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: "{{ hermes_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ hermes_name }}"
+          spec:
+            containers:
+              - name: hermes
+                image: "{{ hermes_image }}"
+                imagePullPolicy: Always
+                args: [gateway, run]
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
+
+- name: Wait for the Hermes gateway rollout
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - -n
+      - "{{ hermes_namespace }}"
+      - rollout
+      - status
+      - "statefulset/{{ hermes_name }}"
+      - --timeout=180s
+  changed_when: false
+  when: not ansible_check_mode

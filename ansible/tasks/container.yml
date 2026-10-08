@@ -1,0 +1,37 @@
+---
+- name: Install Hermes on a container engine
+  ansible.builtin.include_tasks: container/install.yml
+  when: hermes_action == 'install'
+
+- name: Start Hermes gateway
+  ansible.builtin.include_tasks: container/gateway.yml
+  when: hermes_action == 'run' and run_mode == 'gateway'
+
+- name: Stop Hermes services
+  ansible.builtin.include_tasks: container/stop.yml
+  when: hermes_action == 'stop'
+
+- name: Connect Hermes Desktop
+  ansible.builtin.include_tasks: container/connect.yml
+  when: hermes_action == 'connect'
+
+- name: Back up Hermes data
+  ansible.builtin.include_tasks: container/backup.yml
+  when: hermes_action == 'backup' and not ansible_check_mode
+
+- name: Restore Hermes data
+  ansible.builtin.include_tasks: container/restore.yml
+  when: hermes_action == 'restore' and not ansible_check_mode
+
+- name: Update Hermes
+  ansible.builtin.include_tasks: container/update.yml
+  when: hermes_action == 'update' and not ansible_check_mode
+
+- name: Roll back Hermes
+  ansible.builtin.include_tasks: container/rollback.yml
+  when: hermes_action == 'rollback' and not ansible_check_mode
+
+- name: Skip state-changing action in check mode
+  ansible.builtin.debug:
+    msg: "{{ hermes_action }} changes persistent data and is not run in check mode."
+  when: ansible_check_mode and hermes_action in ['backup', 'restore', 'update', 'rollback']

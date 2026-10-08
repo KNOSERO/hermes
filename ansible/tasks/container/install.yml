@@ -1,0 +1,15 @@
+---
+- name: Pull the Hermes Agent image
+  community.docker.docker_image:
+    name: "{{ hermes_image }}"
+    source: pull
+    force_source: true
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+
+- name: Create persistent Hermes data volume
+  community.docker.docker_volume:
+    name: "{{ hermes_name }}"
+    state: present
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true

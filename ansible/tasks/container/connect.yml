@@ -1,0 +1,26 @@
+---
+- name: Ensure persistent Hermes data volume exists
+  community.docker.docker_volume:
+    name: "{{ hermes_name }}"
+    state: present
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+
+- name: Start the authenticated Hermes Desktop server
+  community.docker.docker_container:
+    name: "{{ hermes_desktop_name }}"
+    image: "{{ hermes_image }}"
+    command: [serve, --host, 0.0.0.0, --port, '9119']
+    state: started
+    restart_policy: unless-stopped
+    published_ports:
+      - "{{ lookup('env', 'HERMES_DESKTOP_PUBLISHED_PORT') }}"
+    env:
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: "{{ lookup('env', 'HERMES_DESKTOP_USERNAME') }}"
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "{{ lookup('env', 'HERMES_DESKTOP_PASSWORD') }}"
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: "{{ lookup('env', 'HERMES_DESKTOP_SECRET') }}"
+    volumes:
+      - "{{ hermes_name }}:{{ hermes_data_path }}"
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+  no_log: true

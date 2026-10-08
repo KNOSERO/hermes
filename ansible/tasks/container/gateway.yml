@@ -1,0 +1,19 @@
+---
+- name: Ensure persistent Hermes data volume exists
+  community.docker.docker_volume:
+    name: "{{ hermes_name }}"
+    state: present
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+
+- name: Run the Hermes gateway
+  community.docker.docker_container:
+    name: "{{ hermes_name }}"
+    image: "{{ hermes_image }}"
+    command: gateway run
+    state: started
+    restart_policy: unless-stopped
+    volumes:
+      - "{{ hermes_name }}:{{ hermes_data_path }}"
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true

@@ -1,0 +1,66 @@
+---
+- name: Validate the requested backup archive
+  ansible.builtin.stat:
+    path: "/backups/{{ restore_archive }}"
+  register: archive_file
+
+- name: Reject a missing or partial backup
+  ansible.builtin.assert:
+    that:
+      - archive_file.stat.exists
+      - archive_file.stat.isreg
+      - not restore_archive.endswith('.partial')
+    fail_msg: "Restore requires a complete ZIP archive under /backups."
+
+- name: Verify ZIP archive integrity
+  ansible.builtin.command:
+    argv: [unzip, -t, "/backups/{{ restore_archive }}"]
+  changed_when: false
+
+- name: Stop the current Hermes gateway
+  community.docker.docker_container:
+    name: "{{ hermes_name }}"
+    state: absent
+    docker_host: "{{ docker_host }}"
+    use_ssh_client: true
+
+- name: Set restore helper name
+  ansible.builtin.set_fact:
+    restore_helper: "{{ hermes_name }}-restore-{{ backup_stamp }}"
+
+- name: Restore Hermes data in a temporary container
+  block:
+    - name: Create restore helper container
+      ansible.builtin.command:
+        argv:
+          - docker
+          - create
+          - --name
+          - "{{ restore_helper }}"
+          - --volume
+          - "{{ hermes_name }}:{{ hermes_data_path }}"
+          - "{{ hermes_image }}"
+          - import
+          - "/tmp/{{ restore_archive }}"
+          - --force
+      changed_when: true
+
+    - name: Copy the archive into the helper
+      ansible.builtin.command:
+        argv:
+          - docker
+          - cp
+          - "/backups/{{ restore_archive }}"
+          - "{{ restore_helper }}:/tmp/{{ restore_archive }}"
+      changed_when: true
+
+    - name: Restore Hermes data
+      ansible.builtin.command:
+        argv: [docker, start, -a, "{{ restore_helper }}"]
+      changed_when: true
+  always:
+    - name: Remove restore helper container
+      ansible.builtin.command:
+        argv: [docker, rm, -f, "{{ restore_helper }}"]
+      failed_when: false
+      changed_when: false

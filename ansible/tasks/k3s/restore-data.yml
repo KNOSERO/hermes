@@ -1,0 +1,159 @@
+---
+- name: Validate the requested backup archive
+  ansible.builtin.stat:
+    path: "/backups/{{ restore_archive }}"
+  register: archive_file
+
+- name: Reject a missing or partial backup
+  ansible.builtin.assert:
+    that:
+      - archive_file.stat.exists
+      - archive_file.stat.isreg
+      - not restore_archive.endswith('.partial')
+    fail_msg: "Restore requires a complete ZIP archive under /backups."
+
+- name: Verify ZIP archive integrity
+  ansible.builtin.command:
+    argv: [unzip, -t, "/backups/{{ restore_archive }}"]
+  changed_when: false
+
+- name: Stop Hermes gateway before replacing data
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ hermes_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        replicas: 0
+        selector:
+          matchLabels:
+            app: "{{ hermes_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ hermes_name }}"
+          spec:
+            containers:
+              - name: hermes
+                image: "{{ hermes_image }}"
+                args: [gateway, run]
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
+
+- name: Find the Hermes Desktop Deployment before restore
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ hermes_desktop_name }}"
+    namespace: "{{ hermes_namespace }}"
+  register: hermes_desktop_deployment
+  when: not ansible_check_mode
+
+- name: Scale down the Hermes Desktop server before replacing data
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ hermes_desktop_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        replicas: 0
+        selector:
+          matchLabels:
+            app: "{{ hermes_desktop_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ hermes_desktop_name }}"
+          spec:
+            containers:
+              - name: hermes
+                image: "{{ hermes_image }}"
+                args: [serve, --host, 0.0.0.0, --port, '9119']
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
+  when:
+    - not ansible_check_mode
+    - hermes_desktop_deployment.resources | length > 0
+
+- name: Set restore helper pod name
+  ansible.builtin.set_fact:
+    restore_helper: "{{ hermes_name }}-restore-{{ backup_stamp }}"
+
+- name: Restore Hermes data in a temporary pod
+  block:
+    - name: Mount Hermes data in a temporary restore pod
+      kubernetes.core.k8s:
+        state: present
+        wait: true
+        wait_timeout: 120
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: "{{ restore_helper }}"
+            namespace: "{{ hermes_namespace }}"
+          spec:
+            restartPolicy: Never
+            containers:
+              - name: helper
+                image: "{{ hermes_image }}"
+                command: [sleep, '3600']
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
+
+    - name: Copy archive into restore pod
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - -n
+          - "{{ hermes_namespace }}"
+          - cp
+          - "/backups/{{ restore_archive }}"
+          - "{{ restore_helper }}:/tmp/restore.zip"
+      changed_when: true
+
+    - name: Import Hermes data into persistent storage
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - -n
+          - "{{ hermes_namespace }}"
+          - exec
+          - "{{ restore_helper }}"
+          - --
+          - /opt/hermes/docker/main-wrapper.sh
+          - import
+          - /tmp/restore.zip
+          - --force
+      changed_when: true
+  always:
+    - name: Remove temporary restore pod
+      kubernetes.core.k8s:
+        state: absent
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: "{{ restore_helper }}"
+            namespace: "{{ hermes_namespace }}"

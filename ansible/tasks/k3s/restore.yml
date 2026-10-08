@@ -1,0 +1,14 @@
+---
+- name: Snapshot current Hermes data before restore
+  ansible.builtin.include_tasks: backup.yml
+  vars:
+    backup_label: before-restore
+
+- name: Replace Hermes data from the selected archive
+  ansible.builtin.include_tasks: restore-data.yml
+
+- name: Start Hermes gateway with restored data
+  ansible.builtin.include_tasks: gateway.yml
+
+- name: Restart Hermes Desktop connection after restore
+  ansible.builtin.include_tasks: connect.yml

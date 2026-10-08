@@ -1,0 +1,87 @@
+---
+- name: Read the current Hermes StatefulSet
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: StatefulSet
+    name: "{{ hermes_name }}"
+    namespace: "{{ hermes_namespace }}"
+  register: current_statefulset
+
+- name: Read the running Hermes pod image
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ hermes_namespace }}"
+    label_selectors:
+      - "app={{ hermes_name }}"
+  register: current_pods
+
+- name: Save previous image reference
+  ansible.builtin.set_fact:
+    previous_image: "{{ ((current_pods.resources[0].status.containerStatuses[0].imageID | default('')) | regex_search('([^ ]+@sha256:[a-f0-9]+)')) | default(current_statefulset.resources[0].spec.template.spec.containers[0].image, true) }}"
+
+- name: Back up Hermes data before update
+  ansible.builtin.include_tasks: backup.yml
+  vars:
+    backup_label: pre-update
+
+- name: Run Hermes using the latest image
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ hermes_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: "{{ hermes_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ hermes_name }}"
+          spec:
+            containers:
+              - name: hermes
+                image: "{{ hermes_image }}"
+                imagePullPolicy: Always
+                args: [gateway, run]
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
+
+- name: Restart Hermes to pull the latest image
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - -n
+      - "{{ hermes_namespace }}"
+      - rollout
+      - restart
+      - "statefulset/{{ hermes_name }}"
+  changed_when: true
+
+- name: Wait for update rollout
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - -n
+      - "{{ hermes_namespace }}"
+      - rollout
+      - status
+      - "statefulset/{{ hermes_name }}"
+      - --timeout=180s
+  changed_when: false
+
+- name: Record rollback image and data snapshot
+  ansible.builtin.copy:
+    dest: "/backups/{{ hermes_name }}-rollback.json"
+    mode: '0600'
+    content: "{{ {'image': previous_image, 'snapshot': backup_archive, 'updated': backup_stamp} | to_nice_json }}\n"

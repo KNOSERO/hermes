@@ -1,0 +1,87 @@
+---
+- name: Create Desktop login credentials
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ hermes_desktop_auth_name }}"
+        namespace: "{{ hermes_namespace }}"
+      type: Opaque
+      stringData:
+        username: "{{ lookup('env', 'HERMES_DESKTOP_USERNAME') }}"
+        password: "{{ lookup('env', 'HERMES_DESKTOP_PASSWORD') }}"
+        signing-secret: "{{ lookup('env', 'HERMES_DESKTOP_SECRET') }}"
+  no_log: true
+
+- name: Start the authenticated Hermes Desktop server
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ hermes_desktop_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: "{{ hermes_desktop_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ hermes_desktop_name }}"
+          spec:
+            containers:
+              - name: hermes
+                image: "{{ hermes_image }}"
+                imagePullPolicy: Always
+                args: [serve, --host, 0.0.0.0, --port, '9119']
+                ports:
+                  - name: desktop
+                    containerPort: 9119
+                env:
+                  - name: HERMES_DASHBOARD_BASIC_AUTH_USERNAME
+                    valueFrom:
+                      secretKeyRef:
+                        name: "{{ hermes_desktop_auth_name }}"
+                        key: username
+                  - name: HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: "{{ hermes_desktop_auth_name }}"
+                        key: password
+                  - name: HERMES_DASHBOARD_BASIC_AUTH_SECRET
+                    valueFrom:
+                      secretKeyRef:
+                        name: "{{ hermes_desktop_auth_name }}"
+                        key: signing-secret
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
+  no_log: true
+
+- name: Expose Hermes Desktop through a Kubernetes NodePort
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ hermes_desktop_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        type: NodePort
+        selector:
+          app: "{{ hermes_desktop_name }}"
+        ports:
+          - name: desktop
+            port: 9119
+            targetPort: 9119
+            nodePort: 31119

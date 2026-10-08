@@ -1,0 +1,80 @@
+---
+- name: Find the Hermes gateway StatefulSet
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: StatefulSet
+    name: "{{ hermes_name }}"
+    namespace: "{{ hermes_namespace }}"
+  register: hermes_gateway_statefulset
+
+- name: Scale down the Hermes gateway
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ hermes_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        replicas: 0
+        selector:
+          matchLabels:
+            app: "{{ hermes_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ hermes_name }}"
+          spec:
+            containers:
+              - name: hermes
+                image: "{{ hermes_image }}"
+                args: [gateway, run]
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
+  when: hermes_gateway_statefulset.resources | length > 0
+
+- name: Find the Hermes Desktop Deployment
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ hermes_desktop_name }}"
+    namespace: "{{ hermes_namespace }}"
+  register: hermes_desktop_deployment
+
+- name: Scale down the Hermes Desktop server
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ hermes_desktop_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        replicas: 0
+        selector:
+          matchLabels:
+            app: "{{ hermes_desktop_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ hermes_desktop_name }}"
+          spec:
+            containers:
+              - name: hermes
+                image: "{{ hermes_image }}"
+                args: [serve, --host, 0.0.0.0, --port, '9119']
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
+  when: hermes_desktop_deployment.resources | length > 0

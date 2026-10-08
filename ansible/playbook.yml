@@ -1,0 +1,55 @@
+---
+- name: Manage Hermes Agent
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - /app/.config/hermes.yml
+  vars:
+    backend: "{{ lookup('env', 'HERMES_BACKEND') }}"
+    hermes_action: "{{ lookup('env', 'HERMES_ACTION') }}"
+    hermes_image: "{{ lookup('env', 'HERMES_IMAGE') | default(hermes_defaults.image, true) }}"
+    hermes_name: "{{ lookup('env', 'HERMES_NAME') | default(hermes_defaults.name, true) }}"
+    hermes_desktop_name: "{{ hermes_name[:51] }}-desktop"
+    hermes_desktop_auth_name: "{{ hermes_desktop_name }}-auth"
+    hermes_namespace: "{{ lookup('env', 'HERMES_NAMESPACE') | default(hermes_defaults.namespace, true) }}"
+    hermes_storage: "{{ lookup('env', 'HERMES_STORAGE') | default(hermes_defaults.storage, true) }}"
+    hermes_data_path: "{{ lookup('env', 'HERMES_DATA_PATH') | default(hermes_defaults.data_path, true) }}"
+    run_mode: "{{ lookup('env', 'HERMES_MODE') | default('gateway', true) }}"
+    backup_label: "{{ lookup('env', 'HERMES_LABEL') }}"
+    restore_archive: "{{ lookup('env', 'HERMES_ARCHIVE') }}"
+    restore_confirmed: "{{ lookup('env', 'HERMES_RESTORE_CONFIRMED') | lower in ['1', 'true', 'yes'] }}"
+    backup_stamp: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+    docker_host: "{{ lookup('env', 'DOCKER_HOST') }}"
+  tasks:
+    - name: Validate requested backend and action
+      ansible.builtin.assert:
+        that:
+          - backend in ['podman', 'docker', 'k3s']
+          - hermes_action in ['install', 'run', 'stop', 'connect', 'backup', 'restore']
+          - hermes_name is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - hermes_namespace is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+          - hermes_action != 'run' or run_mode == 'gateway'
+          - hermes_action != 'restore' or restore_archive is match('^[A-Za-z0-9][A-Za-z0-9_.-]*[.]zip$')
+          - hermes_action != 'backup' or backup_label == '' or backup_label is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "The backend or action is not supported."
+
+    - name: Ask before restoring Hermes data
+      ansible.builtin.pause:
+        prompt: "Type yes to replace Hermes data from {{ restore_archive }}"
+      register: restore_confirmation
+      when: hermes_action == 'restore' and not restore_confirmed and not ansible_check_mode
+
+    - name: Require restore confirmation
+      ansible.builtin.assert:
+        that: restore_confirmation.user_input | lower in ['y', 'yes', 't', 'tak']
+        fail_msg: "Restore cancelled; Hermes data was not changed."
+      when: hermes_action == 'restore' and not restore_confirmed and not ansible_check_mode
+
+    - name: Manage a Podman or Docker target
+      ansible.builtin.include_tasks: tasks/container.yml
+      when: backend in ['podman', 'docker']
+
+    - name: Manage a k3s target
+      ansible.builtin.include_tasks: tasks/k3s.yml
+      when: backend == 'k3s'

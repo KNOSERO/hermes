@@ -1,0 +1,95 @@
+---
+- name: Create the Hermes namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ hermes_namespace }}"
+
+- name: Create persistent Hermes storage
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ hermes_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: "{{ hermes_storage }}"
+
+- name: Create a temporary pod to bind local-path storage
+  kubernetes.core.k8s:
+    state: present
+    wait: true
+    wait_timeout: 120
+    definition:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: "{{ hermes_name }}-storage-check"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        restartPolicy: Never
+        containers:
+          - name: helper
+            image: "{{ hermes_image }}"
+            command: [sleep, '3600']
+            volumeMounts:
+              - name: data
+                mountPath: "{{ hermes_data_path }}"
+        volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: "{{ hermes_name }}"
+  when: not ansible_check_mode
+
+- name: Remove temporary storage pod
+  kubernetes.core.k8s:
+    state: absent
+    definition:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: "{{ hermes_name }}-storage-check"
+        namespace: "{{ hermes_namespace }}"
+  when: not ansible_check_mode
+
+- name: Create stopped Hermes StatefulSet
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ hermes_name }}"
+        namespace: "{{ hermes_namespace }}"
+      spec:
+        serviceName: "{{ hermes_name }}"
+        replicas: 0
+        selector:
+          matchLabels:
+            app: "{{ hermes_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ hermes_name }}"
+          spec:
+            containers:
+              - name: hermes
+                image: "{{ hermes_image }}"
+                imagePullPolicy: Always
+                args: [gateway, run]
+                volumeMounts:
+                  - name: data
+                    mountPath: "{{ hermes_data_path }}"
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: "{{ hermes_name }}"
