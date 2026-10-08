@@ -1,0 +1,10 @@
+.backups
+.idea
+.config
+.scratch
+.secret
+web/node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts
+
